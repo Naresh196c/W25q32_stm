@@ -19,9 +19,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "w25q32.h"
+#include "battery_flash.h"
+#include "can_service.h"
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -43,6 +43,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi2;
 
 UART_HandleTypeDef huart1;
@@ -55,6 +56,7 @@ UART_HandleTypeDef huart1;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_SPI1_Init(void);
 static void MX_SPI2_Init(void);
 static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN PFP */
@@ -65,7 +67,6 @@ static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN 0 */
 
 /* USER CODE END 0 */
-uint32_t flashID;
 /**
   * @brief  The application entry point.
   * @retval int
@@ -76,71 +77,6 @@ int __io_putchar(int ch)
     return ch;
 }
 
-typedef struct
-{
-    uint32_t Magic;
-    uint32_t BatteryID[8];
-} FlashBattery_t;
-
-#define BATTERY_DATA_MAGIC  0x42415454UL
-
-FlashBattery_t flashData;
-
-static void BatteryData_SetEmpty(FlashBattery_t *data)
-{
-    data->Magic = BATTERY_DATA_MAGIC;
-
-    for (uint8_t i = 0; i < 8U; i++)
-    {
-        data->BatteryID[i] = 0xFFFFFFFFUL;
-    }
-}
-
-static uint16_t UART_ReadLine(char *buffer, uint16_t bufferSize)
-{
-    uint16_t index = 0;
-    char ch;
-
-    if (bufferSize == 0U)
-    {
-        return 0U;
-    }
-
-    while (1)
-    {
-        HAL_UART_Receive(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
-
-        /* Ignore the LF that follows CR in a PuTTY CR+LF line ending. */
-        if ((index == 0U) && ((ch == '\r') || (ch == '\n')))
-        {
-            continue;
-        }
-
-        if ((ch == '\r') || (ch == '\n'))
-        {
-            buffer[index] = '\0';
-            printf("\r\n");
-            return index;
-        }
-
-        if ((ch == '\b') || (ch == 0x7F))
-        {
-            if (index > 0U)
-            {
-                index--;
-                printf("\b \b");
-            }
-            continue;
-        }
-
-        if (index < (bufferSize - 1U))
-        {
-            buffer[index++] = ch;
-            HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
-        }
-    }
-}
-
 int main(void)
 {
 
@@ -149,7 +85,6 @@ int main(void)
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
-  char input[32];
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
@@ -166,6 +101,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_SPI1_Init();
   MX_SPI2_Init();
   MX_USART1_UART_Init();
 
@@ -173,140 +109,22 @@ int main(void)
   setvbuf(stdout, NULL, _IONBF, 0);
 
   W25_Init();
+  BatteryFlash_Init();
 
-  uint8_t status;
+  printf("\r\nW25Q32 JEDEC ID: 0x%06lX\r\n", W25_ReadID());
 
-
-  printf("\r\n");
-  printf("=================================\r\n");
-  printf(" W25Q32 TEST\r\n");
-  printf("=================================\r\n");
-
-  /* Step 1 : Read JEDEC ID */
-  flashID = W25_ReadID();
-  printf("JEDEC ID = 0x%06lX\r\n", flashID);
-
-  /* Step 2 : Read Status Register */
-  status = W25_ReadStatus();
-  printf("Status Before = 0x%02X\r\n", status);
-
-
-
-
-  printf("\r\nReading Previous Data...\r\n");
-
-  W25_ReadData(0,
-               (uint8_t *)&flashData,
-               sizeof(flashData));
-
-  if (flashData.Magic != BATTERY_DATA_MAGIC)
+  if (CAN_Service_Init() != HAL_OK)
   {
-      printf("No valid battery database found; using empty slots.\r\n");
-      BatteryData_SetEmpty(&flashData);
+      printf("ERROR: MCP2515 initialization failed\r\n");
+      Error_Handler();
   }
 
-  printf("\r\nStored Battery IDs\r\n");
-
-  for(int i = 0; i < 8; i++)
-  {
-      printf("Battery %d : 0x%08lX\r\n",
-             i + 1,
-             flashData.BatteryID[i]);
-  }
+  printf("MCP2515 ready: 8 MHz crystal, 500 kbit/s, polling RX\r\n");
+  printf("Waiting for CAN IDs 0x530 and 0x531...\r\n");
 
   while (1)
   {
-      char choice;
-
-      printf("\r\n");
-      printf("========== MENU ==========\r\n");
-      printf("1. Read Battery IDs\r\n");
-      printf("2. Write Battery ID\r\n");
-      printf("Enter Choice : ");
-
-      UART_ReadLine(input, sizeof(input));
-      choice = input[0];
-
-      switch(choice)
-      {
-          case '1':
-          {
-        	  W25_ReadData(0,
-        	               (uint8_t *)&flashData,
-        	               sizeof(flashData));
-
-              if (flashData.Magic != BATTERY_DATA_MAGIC)
-              {
-                  BatteryData_SetEmpty(&flashData);
-              }
-
-        	  printf("\r\nStored Battery IDs\r\n");
-
-        	  for(int i = 0; i < 8; i++)
-        	  {
-        	      printf("Battery %d : 0x%08lX\r\n",
-        	             i + 1,
-        	             flashData.BatteryID[i]);
-        	  }
-        	  break;
-          }
-
-          case '2':
-          {
-              char *end;
-              unsigned long slot;
-              unsigned long batteryId;
-              FlashBattery_t verifyData;
-
-              printf("\r\nSelect Battery Slot (1-8): ");
-              UART_ReadLine(input, sizeof(input));
-              slot = strtoul(input, &end, 10);
-
-              if ((*input == '\0') || (*end != '\0') ||
-                  (slot < 1UL) || (slot > 8UL))
-              {
-                  printf("Invalid slot. Enter a number from 1 to 8.\r\n");
-                  break;
-              }
-
-              printf("Enter Battery ID (decimal or 0x hexadecimal): ");
-              UART_ReadLine(input, sizeof(input));
-              batteryId = strtoul(input, &end, 0);
-
-              if ((*input == '\0') || (*end != '\0') ||
-                  (batteryId > 0xFFFFFFFFUL))
-              {
-                  printf("Invalid Battery ID.\r\n");
-                  break;
-              }
-
-              flashData.BatteryID[slot - 1UL] = (uint32_t)batteryId;
-              flashData.Magic = BATTERY_DATA_MAGIC;
-
-              printf("Erasing Flash...\r\n");
-              W25_SectorErase(0);
-
-              printf("Writing...\r\n");
-              W25_Write(0,
-                        (uint8_t *)&flashData,
-                        sizeof(flashData));
-
-              W25_ReadData(0,
-                           (uint8_t *)&verifyData,
-                           sizeof(verifyData));
-
-              if (memcmp(&flashData, &verifyData, sizeof(flashData)) == 0)
-              {
-                  printf("Saved Battery %lu : 0x%08lX\r\n",
-                         slot, batteryId);
-              }
-              else
-              {
-                  printf("ERROR: Flash verification failed.\r\n");
-              }
-              break;
-          }
-      }
+      CAN_Service_Poll();
   }
   /* USER CODE END 3 */
 }
@@ -342,6 +160,31 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -435,7 +278,8 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
 
   /*Configure GPIO pin : PA8 */
   GPIO_InitStruct.Pin = GPIO_PIN_8;
@@ -443,6 +287,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /* MCP2515 chip select: PB0, inactive high. */
+  GPIO_InitStruct.Pin = GPIO_PIN_0;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

@@ -6,6 +6,8 @@ void W25_WriteEnable(void)
 {
     uint8_t cmd = W25_CMD_WRITE_ENABLE;
 
+    W25_WaitBusy();
+
     W25_CS_LOW();
 
     HAL_SPI_Transmit(&hspi2, &cmd, 1, HAL_MAX_DELAY);
@@ -69,6 +71,12 @@ void W25_SectorErase(uint32_t address)
 
     W25_WriteEnable();
 
+    /* WEL (bit 1) must be set before an erase command is accepted. */
+    if ((W25_ReadStatus() & 0x02U) == 0U)
+    {
+        return;
+    }
+
     cmd[0] = W25_CMD_SECTOR_ERASE;
     cmd[1] = (address >> 16) & 0xFF;
     cmd[2] = (address >> 8) & 0xFF;
@@ -107,6 +115,12 @@ void W25_PageProgram(uint32_t address,
     uint8_t cmd[4];
 
     W25_WriteEnable();
+
+    /* WEL (bit 1) must be set before a program command is accepted. */
+    if ((W25_ReadStatus() & 0x02U) == 0U)
+    {
+        return;
+    }
 
     cmd[0] = W25_CMD_PAGE_PROGRAM;
     cmd[1] = (address >> 16) & 0xFF;
