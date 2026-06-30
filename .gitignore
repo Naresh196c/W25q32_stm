@@ -1,0 +1,15 @@
+# STM32CubeIDE build output
+Debug/
+Release/
+
+# IDE-generated local state
+*.launch
+.metadata/
+
+# Local Codex/agent state
+.agents/
+.codex/
+
+# Operating-system files
+.DS_Store
+Thumbs.db
