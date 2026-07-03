@@ -74,7 +74,8 @@ HAL_StatusTypeDef BatteryFlash_Save(void)
 HAL_StatusTypeDef BatteryFlash_SetID(uint8_t battery_number,
                                      uint32_t battery_id)
 {
-    if((battery_number < 1) || (battery_number > MAX_BATTERIES))
+    if((battery_number < 1U) || (battery_number > MAX_BATTERIES) ||
+       (battery_id > 0x1FFFFFFFUL))
     {
         return HAL_ERROR;
     }

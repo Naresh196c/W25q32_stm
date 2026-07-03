@@ -15,12 +15,12 @@
   *
   ******************************************************************************
   */
-/* USER CODE END Header */
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "w25q32.h"
-#include "battery_flash.h"
 #include "can_service.h"
+#include "scheduler.h"
 #include <stdio.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -109,8 +109,6 @@ int main(void)
   setvbuf(stdout, NULL, _IONBF, 0);
 
   W25_Init();
-  BatteryFlash_Init();
-
   printf("\r\nW25Q32 JEDEC ID: 0x%06lX\r\n", W25_ReadID());
 
   if (CAN_Service_Init() != HAL_OK)
@@ -122,9 +120,17 @@ int main(void)
   printf("MCP2515 ready: 8 MHz crystal, 500 kbit/s, polling RX\r\n");
   printf("Waiting for CAN IDs 0x530 and 0x531...\r\n");
 
+  Scheduler_Init();
+  if (Scheduler_RunInitTasks() == false)
+  {
+      Error_Handler();
+  }
+
   while (1)
   {
       CAN_Service_Poll();
+      Scheduler_PollTick();
+      Scheduler_Run();
   }
   /* USER CODE END 3 */
 }

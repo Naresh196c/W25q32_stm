@@ -168,7 +168,9 @@ HAL_StatusTypeDef MCP2515_Send(const MCP2515_Frame_t *frame)
     uint8_t txctrl;
     uint32_t start;
 
-    if ((frame == NULL) || (frame->id > 0x7FFU) || (frame->dlc > 8U))
+    if ((frame == NULL) || (frame->dlc > 8U) ||
+        ((frame->is_extended == 0U) && (frame->id > 0x7FFU)) ||
+        ((frame->is_extended != 0U) && (frame->id > 0x1FFFFFFFUL)))
     {
         return HAL_ERROR;
     }
@@ -192,8 +194,19 @@ HAL_StatusTypeDef MCP2515_Send(const MCP2515_Frame_t *frame)
         return HAL_BUSY;
     }
 
-    txBuffer[0] = (uint8_t)(frame->id >> 3);
-    txBuffer[1] = (uint8_t)((frame->id & 0x07U) << 5);
+    if (frame->is_extended != 0U)
+    {
+        txBuffer[0] = (uint8_t)(frame->id >> 21);
+        txBuffer[1] = (uint8_t)(((frame->id >> 13) & 0xE0U) |
+                                ((frame->id >> 16) & 0x03U) | 0x08U);
+        txBuffer[2] = (uint8_t)(frame->id >> 8);
+        txBuffer[3] = (uint8_t)frame->id;
+    }
+    else
+    {
+        txBuffer[0] = (uint8_t)(frame->id >> 3);
+        txBuffer[1] = (uint8_t)((frame->id & 0x07U) << 5);
+    }
     txBuffer[4] = frame->dlc;
     for (uint8_t i = 0U; i < frame->dlc; i++)
     {
@@ -246,15 +259,21 @@ HAL_StatusTypeDef MCP2515_Receive(MCP2515_Frame_t *frame)
         return HAL_ERROR;
     }
 
-    /* This application protocol uses 11-bit standard identifiers only. */
     if ((rxBuffer[1] & 0x08U) != 0U)
     {
-        MCP_BitModify(MCP_CANINTF, flag, 0U);
-        return HAL_ERROR;
+        frame->is_extended = 1U;
+        frame->id = ((uint32_t)rxBuffer[0] << 21) |
+                    ((uint32_t)(rxBuffer[1] & 0xE0U) << 13) |
+                    ((uint32_t)(rxBuffer[1] & 0x03U) << 16) |
+                    ((uint32_t)rxBuffer[2] << 8) |
+                     (uint32_t)rxBuffer[3];
     }
-
-    frame->id = ((uint32_t)rxBuffer[0] << 3) |
-                ((uint32_t)rxBuffer[1] >> 5);
+    else
+    {
+        frame->is_extended = 0U;
+        frame->id = ((uint32_t)rxBuffer[0] << 3) |
+                    ((uint32_t)rxBuffer[1] >> 5);
+    }
     frame->dlc = rxBuffer[4] & 0x0FU;
     if (frame->dlc > 8U)
     {
